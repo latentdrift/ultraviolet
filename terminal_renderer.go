@@ -953,9 +953,18 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 				s.insertCells(newbuf, newLine[n+1:], nLastCell-oLastCell)
 			}
 		} else if oLastCell > nLastCell {
+			// The cell at n may be a wide cell. A DCH or EL that starts on
+			// its continuation column erases the whole wide cell (DEC,
+			// ghostty, kitty, x/vt), so start after it and repaint the rest
+			// instead of shifting it.
+			split := false
+			for n >= 0 && newLine.At(n+1) != nil && newLine.At(n+1).IsZero() {
+				n++
+				split = true
+			}
 			s.move(newbuf, n+1, y)
 			dchCost := 3 + oLastCell - nLastCell
-			if dchCost > len(ansi.EraseLineRight)+nLastNonBlank-(n+1) {
+			if split || dchCost > len(ansi.EraseLineRight)+nLastNonBlank-(n+1) {
 				if s.putRange(newbuf, oldLine, newLine, y, n+1, nLastNonBlank) {
 					s.move(newbuf, nLastNonBlank+1, y)
 				}
@@ -1141,6 +1150,13 @@ func (s *TerminalRenderer) Render(newbuf *RenderBuffer) {
 
 	if curWidth != newWidth || curHeight != newHeight {
 		s.oldhash, s.newhash = nil, nil
+		if s.clear {
+			// The whole screen is repainted: resize the model first.
+			// Otherwise each row is diffed against a line of the old
+			// width, the copy back truncates, and the columns a grow adds
+			// stay blank in the model whatever this frame draws there.
+			s.curbuf.Resize(newWidth, newHeight)
+		}
 	}
 
 	// TODO: Investigate whether this is necessary. Theoretically, terminals
