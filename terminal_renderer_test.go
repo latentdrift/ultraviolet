@@ -1377,3 +1377,61 @@ func TestRendererScrollRepaintsRowsItMoved(t *testing.T) {
 		t.Errorf("scrolled rows painted %d times, want 2 (rows 1 and 2): %q", n, out)
 	}
 }
+
+// A cursor on a wide glyph's continuation must move before writing after it.
+func TestRendererMoveFromWideContinuation(t *testing.T) {
+	var out bytes.Buffer
+	r := NewTerminalRenderer(&out, []string{"TERM=xterm-256color"})
+	r.SetFullscreen(true)
+	r.Resize(3, 1)
+	scr := NewScreenBuffer(3, 1)
+	NewStyledString("漢 ").Draw(scr, scr.Bounds())
+	r.Render(scr.RenderBuffer)
+	r.MoveTo(1, 0)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	NewStyledString("漢x").Draw(scr, scr.Bounds())
+	r.Render(scr.RenderBuffer)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	// Without CUF, x overwrites the continuation and erases 漢.
+	if got, want := out.String(), "\x1b[C\x1b[?7lx\x1b[?7h"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	out.Reset()
+	NewStyledString("漢x").Draw(scr, scr.Bounds())
+	r.Render(scr.RenderBuffer)
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("unchanged wide row repainted: %q", out.String())
+	}
+}
+
+func TestRelativeCursorMoveWideBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		from, to int
+		want     string
+	}{
+		{"continuation", 1, 2, "\x1b[C"},
+		{"partial glyph", 0, 1, "\x1b[C"},
+		{"whole glyph", 0, 2, "界"},
+		{"narrow cell", 2, 3, "a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			r := NewTerminalRenderer(&out, []string{"TERM=xterm-256color"})
+			scr := NewScreenBuffer(4, 1)
+			NewStyledString("界ab").Draw(scr, scr.Bounds())
+			got := relativeCursorMove(r, scr.RenderBuffer, tc.from, 0, tc.to, 0, true, false, false)
+			if got != tc.want {
+				t.Fatalf("movement = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

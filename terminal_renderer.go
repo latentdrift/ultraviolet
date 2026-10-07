@@ -1412,6 +1412,12 @@ func relativeCursorMove(s *TerminalRenderer, newbuf *RenderBuffer, fx, fy, tx, t
 			if overwrite && ty >= 0 {
 				for i := 0; i < n; i++ {
 					cell := newbuf.CellAt(fx+i, ty)
+					// Reprinting must cover exactly the movement, without starting
+					// or ending inside a wide glyph.
+					if cell == nil || cell.Width <= 0 || i+cell.Width > n {
+						overwrite = false
+						break
+					}
 					if cell != nil && cell.Width > 0 {
 						i += cell.Width - 1
 						if !cell.Style.Equal(&s.cur.Style) || !cell.Link.Equal(&s.cur.Link) {
